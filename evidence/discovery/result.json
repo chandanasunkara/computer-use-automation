@@ -1,0 +1,6 @@
+{
+  "status": "success",
+  "artifact": "artifacts\\member_lookup.json",
+  "llm_calls": 3,
+  "discovery_outputs": {}
+}

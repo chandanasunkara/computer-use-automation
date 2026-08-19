@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "capability_id": "member.lookup_savings_balance",
+  "version": "1.0.0",
+  "description": "Look up member 12345 and return their current savings balance",
+  "target": {
+    "surface": "web",
+    "application": "local-bank-demo"
+  },
+  "inputs": {
+    "member_id": {
+      "type": "string",
+      "required": true
+    }
+  },
+  "outputs": {
+    "savings_balance": {
+      "type": "number"
+    },
+    "member_name": {
+      "type": "string"
+    }
+  },
+  "steps": [
+    {
+      "id": "step_1",
+      "action": "type",
+      "target": {
+        "role": "textbox",
+        "name": "Member ID",
+        "label": "Member ID",
+        "test_id": null,
+        "text": null
+      },
+      "value": "{{member_id}}",
+      "output": null,
+      "expected": null,
+      "risk": "safe"
+    },
+    {
+      "id": "step_2",
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "Search",
+        "label": null,
+        "test_id": "search-button",
+        "text": null
+      },
+      "value": null,
+      "output": null,
+      "expected": "Search",
+      "risk": "safe"
+    }
+  ],
+  "success_condition": "member details are visible and declared outputs were extracted"
+}
