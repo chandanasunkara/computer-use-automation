@@ -68,9 +68,11 @@ Edit `.env` and set:
 
 ```text
 OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-5.6-luna
+OPENAI_BASE_URL=https://api.groq.com/openai/v1
+OPENAI_MODEL=openai/gpt-oss-20b
 BASE_URL=http://127.0.0.1:8000
 HEADLESS=false
+MAX_STEPS=12
 ```
 
 Do not commit `.env`.
@@ -105,7 +107,7 @@ The app will be available at:
 http://127.0.0.1:8000
 ```
 
-The demo contains fake member data only.
+The demo contains mock data only.
 
 ## 2. Run the genuine LLM discovery
 
@@ -198,33 +200,36 @@ pytest -q --headed
 ## 7. What is in the repository
 
 ```text
-app/
-  agent.py          LLM discovery loop
-  artifact.py       capability schema and recorder
-  cli.py            discovery/replay commands
-  policy.py         allowlist, risk policy, redaction
-  replay.py         deterministic executor
-  surface.py        browser surface abstraction
-  models.py         result/error contracts
-
-demo_app/
-  __main__.py       local fake banking back-office UI
-
-artifacts/
-  example_member_lookup.json
-
-evidence/
-  discovery/
-  replay/
-  errors/
-  intervention/
-
-tests/
-  test_artifact.py
-  test_policy.py
-  test_replay_contract.py
-
-REPORT.md
+computer-use-automation/
+├── app/
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── agent.py              # LLM discovery loop (observe-decide-act)
+│   ├── artifact.py           # Capability schema validation and persistence
+│   ├── cli.py                # Command-line interface entry point
+│   ├── models.py             # Pydantic data models and execution contracts
+│   ├── policy.py             # Domain allowlisting and PII/secret scrubbing
+│   ├── replay.py             # Deterministic, model-free execution engine
+│   └── surface.py            # BrowserSurface DOM and accessibility abstraction
+├── artifacts/
+│   ├── .gitkeep
+│   └── member_lookup.json    # Versioned, typed capability artifact
+├── demo_app/
+│   ├── __init__.py
+│   └── __main__.py           # Local core banking servicing UI
+├── evidence/
+│   ├── discovery/            # Discovery run traces and transcripts
+│   ├── errors/               # Business outcome and exception logs
+│   ├── intervention/         # Human takeover event recordings
+│   └── replay/               # Deterministic execution logs and snapshots
+├── tests/
+│   ├── test_artifact.py      # Artifact schema invariant tests
+│   ├── test_policy.py        # Allowlist and redaction security tests
+│   └── test_replay_contract.py # Model-free replay verification tests
+├── .gitignore
+├── README.md
+├── REPORT.md                 # Technical design and trade-off write-up
+└── requirements.txt
 ```
 
 ## Design boundary
@@ -247,7 +252,7 @@ Replay is intentionally model-free. The model discovers; the artifact becomes th
 Before publishing:
 
 ```bash
-pytest -q
+python -m pytest tests/ -v
 git status
 git diff -- .env
 ```
@@ -264,5 +269,3 @@ git branch -M main
 git remote add origin <YOUR_PUBLIC_REPO_URL>
 git push -u origin main
 ```
-
-The assignment asks for a public GitHub repository containing `README.md`, `REPORT.md`, and `/evidence/`, then asks you to email the repository URL to `assignments@interface.ai`.

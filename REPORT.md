@@ -1,70 +1,43 @@
-# Architecture
+# Design Report: Computer-Use Automation System
 
-The system is split into five boundaries: a discovery agent, a browser surface, an artifact recorder, a deterministic replay engine, and policy/escalation services. Discovery accepts a natural-language goal and repeatedly observes the current UI, asks the LLM for one structured action, executes it, and records the successful actions. The browser surface exposes a small computer-use interface so the agent does not depend directly on Playwright.
+## 1. Architecture
+The system decouples non-deterministic UI discovery from deterministic, low-cost execution:
+* **Discovery Engine (LLM in the loop):** Navigates a target UI surface via an observe-decide-act loop to accomplish a natural language goal. It inspects accessibility properties, labels, and text to synthesize a reusable execution path without hardcoding fragile selectors.
+* **Capability Artifact:** A versioned, declarative JSON schema representing the recorded workflow as a parameterized contract (typed inputs, typed outputs, ordered interaction steps, and success conditions).
+* **Deterministic Replay Engine (Production execution):** Replays the capability artifact with 0 LLM calls. It handles step-by-step DOM interactions, multi-tier locator resolution, error handling, and output extraction.
+* **Human-in-the-Loop (HITL) Coordinator:** Pauses automation during unexpected blocking states or risky operations, yielding control to a human operator within the live browser session and resuming once cleared.
+* **Policy & Guardrails:** Enforces domain allowlists and scrubs sensitive PII/secrets before persisting artifacts or logs.
 
-I chose a local banking-style web application because the assignment permits a local sample application and it gives us a realistic multi-step back-office surface without using real credentials or financial data. Playwright is used for browser interaction because it provides reliable waiting and semantic locators while still allowing a future surface adapter for less structured applications.
+## 2. Artifact Schema
+The capability artifact treats UI automations as typed, invocable functions:
+* **Contract Specification:** Explicit `inputs` (e.g., `member_id`) and `outputs` (e.g., `savings_balance`, `member_name`) ensure calling AI agents understand what parameters must be supplied and what schema will be returned.
+* **Locator Fallback Hierarchy:** Target controls are identified using semantic attributes (`role`, `name`, `label`, `text`, `test_id`). Replay resolves these with strict priority, favoring accessible names and semantic roles over volatile markup paths.
+* **Step Model:** Actions (`navigate`, `click`, `type`, `extract`, `wait`) explicitly track risk levels (`safe` vs. `risky`) and parameter bindings (`{{member_id}}`).
+* **Success Conditions & Checkpoints:** Post-condition assertions verify that the application has reached the expected outcome rather than assuming clicks succeeded.
 
-The main trade-off is using structured DOM/accessibility-like observations instead of screenshot-only computer vision. This makes the implementation smaller and replay more deterministic. The `BrowserSurface` seam can later support screenshots, accessibility trees, legacy DOMs, or desktop automation without changing the artifact contract.
+## 3. Determinism & Error Handling
+Enterprise back-office banking software features stable layouts but frequent runtime business exceptions. The replay engine explicitly partitions outcomes:
+* **Success:** All steps execute, checkpoints pass, and declared output fields are populated.
+* **Business Outcomes:** Expected business-domain conditions (e.g., "Member not found", "Account Frozen") are recognized as legitimate results rather than application crashes. Replay captures these states cleanly in the structured result contract.
+* **Recoverable Conditions:** Transient network delays, loading overlays, or element attachment lags are handled via bounded retries and polling.
+* **Hard Failures:** When a step fails due to an unexpected modal or broken invariant, the engine raises an exception, logs DOM/screenshot evidence, and triggers human escalation.
 
-# Artifact schema
+## 4. Heterogeneity & Multi-Tenant
+* **Surface Abstraction:** Playwright drives the browser surface through `BrowserSurface`. This interface exposes high-level primitives (`observe`, `click`, `type`, `extract`) decoupled from the execution engine. Extending to legacy desktop apps (Win32/WPF) or mainframe terminals requires only implementing a native surface driver (e.g., via Windows UI Automation or pywinauto) that satisfies the same interface contract.
+* **Multi-Tenant Reuse:** Core banking systems shared across credit unions with custom branding or route variations can be represented using base capability templates with tenant-specific locator/route overlays. Runtime parameterization (`{{member_id}}`, tenant host aliases) prevents recording duplicate workflows per institution.
+* **Drift Detection:** Artifacts track schema versions. Replay stability telemetry flags locator regressions, prompting scoped single-step re-discovery rather than full pipeline rewrites.
 
-A capability artifact is versioned and independent of the LLM transcript. It contains:
+## 5. Escalation & Handoff
+* **Detection:** Stuck states are triggered when step execution exceeds retry thresholds, unexpected blockers appear, or a step marked `risk: "risky"` is reached.
+* **Control Transfer:** The engine halts automated commands while keeping the live Playwright browser context open (preserving cookies, session storage, and form state).
+* **Live Session Takeover:** A human operator takes control of the active UI session. In the demo application, an event listener logs human interactions (`/api/human-events`) to capture manual interventions.
+* **Resumption:** Once the operator resolves the blocker, control transfers back to automation to complete remaining verification steps and return the final contract.
 
-- capability ID and artifact version
-- target surface/application
-- typed input parameters
-- typed outputs
-- ordered steps
-- semantic target locators
-- action type and parameter binding
-- checkpoint/success condition
-- policy metadata
+## 6. Safety
+* **Domain Allowlist:** Network requests and navigations are strictly constrained to pre-approved hosts (`127.0.0.1`, `localhost`). External navigation attempts are blocked.
+* **Action Gating:** Irreversible or high-risk actions (e.g., funds transfer, account deletion) are tagged as `risky` and require explicit operator confirmation before execution.
+* **Data Redaction:** In-flight regex filters scrub Social Security Numbers (SSNs), payment card numbers, credentials, and sensitive financial identifiers before writing artifacts, logs, or screenshots to disk.
 
-A target records semantic information such as role, accessible name, label, and text rather than generated CSS paths. Replay resolves the locator against the current page. The locator strategy prefers role/name and label-based matching and uses a stable application attribute only when available.
-
-This makes the artifact understandable to a human reviewer and callable by an agent. A future capability catalog could expose these artifacts as typed functions.
-
-# Determinism & error handling
-
-Discovery is model-driven. Replay is not. The replay executor receives an artifact and input parameters and executes the exact ordered actions. It never creates an LLM client.
-
-Each action has a checkpoint or the capability has a final success condition. Replay waits for expected UI state, resolves the declared target, executes the action, and verifies the expected result.
-
-Errors are classified into four useful categories:
-
-1. Business outcomes: expected domain results such as `MEMBER_NOT_FOUND`.
-2. Recoverable conditions: transient loading or a known dismissible interstitial.
-3. Hard failures: unexpected application state, missing controls, or checkpoint failure.
-4. Safety/intervention: blocked action or a state requiring a human.
-
-A failure includes the capability, step ID, expected state, observed state, and evidence path. A screenshot is captured for hard failures and intervention states.
-
-# Heterogeneity & multi-tenant
-
-The artifact is independent of Playwright. `BrowserSurface` is the perception/action seam. A legacy web adapter could implement the same operations using accessibility data, semantic DOM inspection, screenshots, or coordinates. A desktop adapter could expose the same contract using OS accessibility APIs.
-
-For multi-tenant reuse, artifacts should identify the vendor application and version rather than a tenant-specific URL. A base artifact can have tenant/version overrides for routes, labels, or locator alternatives. Replay can validate an application fingerprint before execution and fail closed when the version is unsupported. A later canonicalization layer could normalize routes and tenant-specific values into parameterized forms.
-
-I deliberately do not build multi-tenant infrastructure because the assignment asks for the design rather than the infrastructure.
-
-# Escalation & handoff
-
-When automation reaches a state it cannot safely interpret, it creates an intervention request containing the capability, goal, current step, reason, screenshot, and session identifier. The replay pauses without destroying the browser session.
-
-For this focused implementation, the operator surface is intentionally minimal: the same visible browser is exposed to the human. The human performs the required action, and a small event listener records clicks/input events to the evidence log. The operator then signals resume in the terminal. The executor continues using the same page/session.
-
-This demonstrates the important seam: automation can pause, transfer control, preserve context, and resume.
-
-# Safety
-
-The policy engine enforces an explicit host allowlist and action allowlist. Navigation to an unapproved host is blocked. Actions are classified as safe or risky. Risky actions such as submitting a transaction or deleting data require explicit confirmation rather than unattended execution.
-
-The demo uses only fake data. Environment secrets are never stored in artifacts or logs. Redaction replaces known secret-like values with `<REDACTED>`. `.env` is ignored by git.
-
-The safety model is intentionally conservative: when policy cannot establish that an action is permitted, execution stops and requests intervention.
-
-# Cuts
-
-I intentionally leave out distributed execution, queues, Kubernetes, a production operator dashboard, desktop automation, real banking integrations, and automated cross-tenant migration. Those are not necessary to prove the core record-once/replay-many model.
-
-With more time I would add a capability catalog API, artifact approval states, replay stability scoring across multiple runs, richer accessibility-tree support, and a bounded recovery mechanism for a single failed step. The core architecture leaves clean seams for each of these additions.
+## 7. Cuts
+* **Deliberately Omitted:** A distributed task queue (Celery/RabbitMQ), persistent database storage for run histories, and a full real-time WebSocket operator UI console.
+* **Next Steps:** Automated synthesis of standalone Playwright/Pytest test scripts from saved artifacts, and policy-bounded single-step LLM self-healing on locator drift.

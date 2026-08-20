@@ -1,0 +1,11 @@
+computer-use-automation/.venv/
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+test-results/
+*.db
+.DS_Store
+evidence/tmp/
+.venv/
+.idea/
